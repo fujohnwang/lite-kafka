@@ -23,7 +23,7 @@ import scala.beans.BeanProperty
  * of course, if sequential message processing is enough, a MessageDispatcher can be used as message handler directly too.
  */
 trait TextMessageDispatcher {
-  def onMessage(topic: String, key: String, message: String, offset: Long): Unit
+  def onMessage(topic: String, key: String, message: String, offset: Long, nextOffset: Long): Unit
 }
 
 
@@ -56,7 +56,7 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
   @BeanProperty
   var bufferSize: Int = 1024 * 64
   @BeanProperty
-  var fetchSize: Int = 100000
+  var fetchSize: Int = 1024 * 1024
   @BeanProperty
   var fetchIntervalIfEmptyInMilliseconds: Int = 100
 
@@ -78,26 +78,30 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
       val startOffset = negotiateOffset(consumer)
       running.compareAndSet(false, true)
 
-      var batchStartOffset = startOffset
+      var readOffset = startOffset
 
       while (running.get()) {
-        val fetchRequest = new FetchRequestBuilder().clientId(clientId).addFetch(topic, partition, batchStartOffset, fetchSize).build()
+        val fetchRequest = new FetchRequestBuilder().clientId(clientId).addFetch(topic, partition, readOffset, fetchSize).build()
         val fetchResponse = consumer.fetch(fetchRequest)
         if (fetchResponse.hasError) {
           val errorCode = fetchResponse.errorCode(topic, partition)
           throw new IllegalStateException("Error fetching data from the Broker:" + metadata.leader, ErrorMapping.exceptionFor(errorCode))
         }
-        if (fetchResponse.messageSet(topic, partition).isEmpty) {
+
+        var numOfRead = 0
+        for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
+          readOffset = messageAndOffset.nextOffset
+
+          val offset = messageAndOffset.offset
+          val key = if (!messageAndOffset.message.hasKey) null else byteBuffer2String(messageAndOffset.message.key)
+          val message = if (messageAndOffset.message.isNull()) null else byteBuffer2String(messageAndOffset.message.payload)
+          messageProcessor.onMessage(topic, key, message, offset, readOffset)
+          numOfRead += 1
+        }
+
+        if (numOfRead == 0) {
           logger.debug(s"no more message fetched, sleep $fetchIntervalIfEmptyInMilliseconds ms for next round fetch.")
           TimeUnit.MILLISECONDS.sleep(fetchIntervalIfEmptyInMilliseconds)
-        } else {
-          for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
-            val offset = messageAndOffset.offset
-            val key = if (!messageAndOffset.message.hasKey) null else readByteBufferToText(messageAndOffset.message.key)
-            val message = if (messageAndOffset.message.isNull()) null else readByteBufferToText(messageAndOffset.message.payload)
-            messageProcessor.onMessage(topic, key, message, offset)
-            batchStartOffset = messageAndOffset.nextOffset
-          }
         }
       }
     } finally {
@@ -110,7 +114,7 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
     running.compareAndSet(true, false)
   }
 
-  protected def readByteBufferToText(buffer: ByteBuffer): String = {
+  protected def byteBuffer2String(buffer: ByteBuffer): String = {
     val bytes = new Array[Byte](buffer.limit)
     buffer.get(bytes)
     new String(bytes, textEncoding)
@@ -122,7 +126,7 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
       var consumer: SimpleConsumer = null
       try {
         val parts = seed.split(':')
-        consumer = new SimpleConsumer(parts(0), parts(1).toInt, soTimeout, bufferSize, "leaderFinderFor" + clientId)
+        consumer = new SimpleConsumer(parts(0), parts(1).toInt, soTimeout, bufferSize, clientId)
         val request = new TopicMetadataRequest(topics)
         val response: kafka.javaapi.TopicMetadataResponse = consumer.send(request)
         for (topicMetadata: kafka.javaapi.TopicMetadata <- response.topicsMetadata) {
@@ -133,7 +137,7 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
           }
         }
       } catch {
-        case ex: Exception => logger.error("Error communicating with Broker [" + seed + "] to find Leader for [" + topic
+        case ex: Exception => throw new IllegalStateException("Error communicating with Broker [" + seed + "] to find Leader for [" + topic
           + ", " + partition + "] Reason: " + ex)
       } finally {
         if (consumer != null) consumer.close()
@@ -167,12 +171,12 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
 object LiteTextMessageConsumer {
   def main(args: Array[String]) {
     val messageConsumer = new LiteTextMessageConsumer(Array("192.168.1.209:9092"), "csw_nbk_data", new TextMessageDispatcher {
-      override def onMessage(topic: String, key: String, message: String, offset: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=$message")
+      override def onMessage(topic: String, key: String, message: String, offset: Long, nextOffSet: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=$message, nextOffset=$nextOffSet")
     })
 
     messageConsumer.setOffsetWhichTime(kafka.api.OffsetRequest.EarliestTime)
     //    messageConsumer.setStartPosition(6L)
-    
+
     new Thread() {
       override def run(): Unit = {
         TimeUnit.SECONDS.sleep(30)

@@ -26,7 +26,7 @@ class KafkaTextMessenger(producer: Producer[String, String]) extends TextMesseng
 /**
  * If a more fine-tuned Kafka Producer is needed, subclass this one to make yourself at ease.
  */
-class KafkaTextMessengerFactory {
+class KafkaTextMessengerFactory(brokerList: String) {
   val brokerListPropertyName = "metadata.broker.list"
   val producerAckPropertyName = "request.required.acks"
 
@@ -35,8 +35,6 @@ class KafkaTextMessengerFactory {
 
   @BeanProperty
   var syncMode: Int = -1
-  @BeanProperty
-  var brokerList: String = _
   @BeanProperty
   var messageKeySerializerClass: String = "kafka.serializer.StringEncoder"
   @BeanProperty
@@ -80,13 +78,11 @@ object KafkaTextMessenger {
     val topic = "csw_nbk_data"
     val brokerList = "192.168.1.209:9092"
 
-    val messengerFactory = new KafkaTextMessengerFactory()
-    messengerFactory.setBrokerList(brokerList)
-    messengerFactory.afterPropertiesSet()
+    val messengerFactory = new KafkaTextMessengerFactory(brokerList)
     val producer = messengerFactory.create
 
     try {
-      producer.send(topic, "12345", "马来西亚2")
+      producer.send(topic, "foxjon", "fukukyo")
     } finally {
       messengerFactory.destroy()
     }
