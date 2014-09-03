@@ -4,7 +4,7 @@ name := """lite-kafka"""
 
 version := "1.0"
 
-scalaVersion := "2.11.1"
+scalaVersion := "2.10.4"
 
 javacOptions ++= Seq("-source", "1.8", "-target", "1.8")
 
@@ -17,6 +17,8 @@ publishTo := Some(Resolver.file("file",  new File(Path.userHome.absolutePath+"/.
 libraryDependencies += "ch.qos.logback" % "logback-core" % "1.1.2"
 
 libraryDependencies += "ch.qos.logback" % "logback-classic" % "1.1.2"
+
+libraryDependencies += "org.slf4j" % "log4j-over-slf4j" %"1.6.2"
 
 // libraryDependencies += "org.apache.commons" % "commons-lang3" % "3.3.2"
 

@@ -4,6 +4,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.Charset
 import java.util
 import java.util.Collections
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kafka.api.{FetchRequestBuilder, PartitionOffsetRequestInfo}
 import kafka.common.{ErrorMapping, TopicAndPartition}
@@ -55,7 +56,9 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
   @BeanProperty
   var bufferSize: Int = 1024 * 64
   @BeanProperty
-  var fetchSize: Int = 100000 // this fetchSize of 100000 might need to be increased if large batches are written to Kafka
+  var fetchSize: Int = 100000
+  @BeanProperty
+  var fetchIntervalIfEmptyInMilliseconds: Int = 100
 
   protected var consumer: SimpleConsumer = _
 
@@ -74,20 +77,28 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
     try {
       val startOffset = negotiateOffset(consumer)
       running.compareAndSet(false, true)
+
+      var batchStartOffset = startOffset
+
       while (running.get()) {
-        val fetchRequest = new FetchRequestBuilder().clientId(clientId).addFetch(topic, partition, startOffset, fetchSize).build()
+        val fetchRequest = new FetchRequestBuilder().clientId(clientId).addFetch(topic, partition, batchStartOffset, fetchSize).build()
         val fetchResponse = consumer.fetch(fetchRequest)
         if (fetchResponse.hasError) {
           val errorCode = fetchResponse.errorCode(topic, partition)
           throw new IllegalStateException("Error fetching data from the Broker:" + metadata.leader, ErrorMapping.exceptionFor(errorCode))
         }
-        for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
-          val offset = messageAndOffset.offset
-          val key = readByteBufferToText(messageAndOffset.message.key)
-          val message = readByteBufferToText(messageAndOffset.message.payload)
-          messageProcessor.onMessage(topic, key, message, offset)
+        if (fetchResponse.messageSet(topic, partition).isEmpty) {
+          logger.debug(s"no more message fetched, sleep $fetchIntervalIfEmptyInMilliseconds ms for next round fetch.")
+          TimeUnit.MILLISECONDS.sleep(fetchIntervalIfEmptyInMilliseconds)
+        } else {
+          for (messageAndOffset <- fetchResponse.messageSet(topic, partition)) {
+            val offset = messageAndOffset.offset
+            val key = if (!messageAndOffset.message.hasKey) null else readByteBufferToText(messageAndOffset.message.key)
+            val message = if (messageAndOffset.message.isNull()) null else readByteBufferToText(messageAndOffset.message.payload)
+            messageProcessor.onMessage(topic, key, message, offset)
+            batchStartOffset = messageAndOffset.nextOffset
+          }
         }
-
       }
     } finally {
       if (consumer != null) consumer.close()
@@ -155,9 +166,19 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
 
 object LiteTextMessageConsumer {
   def main(args: Array[String]) {
-    val messageConsumer = new LiteTextMessageConsumer(Array("localhost:9092"), "test_topic", new TextMessageDispatcher {
+    val messageConsumer = new LiteTextMessageConsumer(Array("192.168.1.209:9092"), "csw_nbk_data", new TextMessageDispatcher {
       override def onMessage(topic: String, key: String, message: String, offset: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=$message")
     })
+
+    messageConsumer.setOffsetWhichTime(kafka.api.OffsetRequest.EarliestTime)
+    //    messageConsumer.setStartPosition(6L)
+    
+    new Thread() {
+      override def run(): Unit = {
+        TimeUnit.SECONDS.sleep(30)
+        messageConsumer.shutdown()
+      }
+    }.start()
 
     messageConsumer.start() // handle exceptions if needs
   }
