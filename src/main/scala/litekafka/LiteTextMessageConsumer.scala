@@ -24,6 +24,8 @@ import scala.beans.BeanProperty
  */
 trait TextMessageDispatcher {
   def onMessage(topic: String, key: String, message: String, offset: Long, nextOffset: Long): Unit
+
+  def eof(): Unit
 }
 
 
@@ -103,6 +105,8 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
           logger.debug(s"no more message fetched, sleep $fetchIntervalIfEmptyInMilliseconds ms for next round fetch.")
           TimeUnit.MILLISECONDS.sleep(fetchIntervalIfEmptyInMilliseconds)
         }
+
+        messageProcessor.eof()
       }
     } finally {
       if (consumer != null) consumer.close()
@@ -172,6 +176,8 @@ object LiteTextMessageConsumer {
   def main(args: Array[String]) {
     val messageConsumer = new LiteTextMessageConsumer(Array("192.168.1.209:9092"), "csw_nbk_data", new TextMessageDispatcher {
       override def onMessage(topic: String, key: String, message: String, offset: Long, nextOffSet: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=$message, nextOffset=$nextOffSet")
+
+      override def eof(): Unit = println("do nothing on eof for demo.")
     })
 
     messageConsumer.setOffsetWhichTime(kafka.api.OffsetRequest.EarliestTime)
