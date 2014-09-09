@@ -7,6 +7,10 @@ import kafka.producer.{KeyedMessage, ProducerConfig}
 
 import scala.beans.BeanProperty
 
+
+/**
+ * If a more generic Message sender is needed, turn to #{MessageSender} facility!
+ */
 trait TextMessenger {
   def send(topic: String, message: String): Unit
 
@@ -21,6 +25,7 @@ class KafkaTextMessenger(producer: Producer[String, String]) extends TextMesseng
     producer.send(message)
   }
 }
+
 
 
 /**

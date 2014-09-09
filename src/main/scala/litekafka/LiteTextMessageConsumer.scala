@@ -22,8 +22,8 @@ import scala.beans.BeanProperty
  *
  * of course, if sequential message processing is enough, a MessageDispatcher can be used as message handler directly too.
  */
-trait TextMessageDispatcher {
-  def onMessage(topic: String, key: String, message: String, offset: Long, nextOffset: Long): Unit
+trait MessageDispatcher {
+  def onMessage(topic: String, key: String, message: Array[Byte], offset: Long, nextOffset: Long): Unit
 
   def eof(): Unit
 }
@@ -36,7 +36,7 @@ trait TextMessageDispatcher {
  *
  * this LiteMessageConsumer will NOT handle failover and reconnect things, make one for yourself with the help of this class if you need.
  */
-class LiteTextMessageConsumer(brokers: Array[String], topic: String, val messageProcessor: TextMessageDispatcher) {
+class LiteTextMessageConsumer(brokers: Array[String], topic: String, val messageProcessor: MessageDispatcher) {
   val logger = LoggerFactory.getLogger("LiteMessageConsumer")
 
   val partition: Int = 0
@@ -95,8 +95,8 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
           readOffset = messageAndOffset.nextOffset
 
           val offset = messageAndOffset.offset
-          val key = if (!messageAndOffset.message.hasKey) null else byteBuffer2String(messageAndOffset.message.key)
-          val message = if (messageAndOffset.message.isNull()) null else byteBuffer2String(messageAndOffset.message.payload)
+          val key = if (!messageAndOffset.message.hasKey) null else new String(readBytes(messageAndOffset.message.key), textEncoding)
+          val message = if (messageAndOffset.message.isNull()) null else readBytes(messageAndOffset.message.payload)
           messageProcessor.onMessage(topic, key, message, offset, readOffset)
           numOfRead += 1
         }
@@ -118,10 +118,10 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
     running.compareAndSet(true, false)
   }
 
-  protected def byteBuffer2String(buffer: ByteBuffer): String = {
+  protected def readBytes(buffer: ByteBuffer): Array[Byte] = {
     val bytes = new Array[Byte](buffer.limit)
     buffer.get(bytes)
-    new String(bytes, textEncoding)
+    bytes
   }
 
   protected def findLeader(): PartitionMetadata = {
@@ -174,8 +174,10 @@ class LiteTextMessageConsumer(brokers: Array[String], topic: String, val message
 
 object LiteTextMessageConsumer {
   def main(args: Array[String]) {
-    val messageConsumer = new LiteTextMessageConsumer(Array("192.168.1.209:9092"), "csw_nbk_data", new TextMessageDispatcher {
-      override def onMessage(topic: String, key: String, message: String, offset: Long, nextOffSet: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=$message, nextOffset=$nextOffSet")
+    val messageConsumer = new LiteTextMessageConsumer(Array("192.168.1.209:9092"), "test", new MessageDispatcher {
+      override def onMessage(topic: String, key: String, message: Array[Byte], offset: Long, nextOffSet: Long): Unit = println(s"receive message from topic:$topic at offset:$offset with key=$key, message=${
+        new String(message, "UTF-8")
+      }, nextOffset=$nextOffSet")
 
       override def eof(): Unit = println("do nothing on eof for demo.")
     })
